@@ -1,0 +1,22 @@
+# Your personal GitHub token
+github_token: c7848f86f175e8303f1a135284f6e7a84d958779
+# Read more: https://github.com/blog/1509-personal-api-tokens
+# You can generate it here: https://github.com/settings/tokens
+
+# Guest OS timezone
+timezone: Europe/Madrid
+
+# Are we need check box updates for every 'vagrant up'?
+box_check_update: false
+
+# Virtual machine name
+machine_name: banners
+
+# Virtual machine IP
+ip: 192.168.83.163
+
+# Virtual machine CPU cores number
+cpus: 1
+
+# Virtual machine RAM
+memory: 512
