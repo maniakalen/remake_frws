@@ -397,8 +397,8 @@ function DoBackup($filename, &$tables)
             fwrite($fd, "LOCK TABLES `$table` WRITE;\n");
             fwrite($fd, "ALTER TABLE `$table` DISABLE KEYS;\n");
 
-            $result = mysql_unbuffered_query("SELECT * FROM `$table`", $DB->handle);        
-            while( $row = mysql_fetch_row($result) )
+            $result = $DB->Query("SELECT * FROM `$table`");
+            while( $row = $result->fetch(PDO::FETCH_ASSOC) )
             {
                 $row = array_map('PrepareRow', $row);
                 fwrite($fd, "INSERT INTO `$table` VALUES (" . join(",", $row) . ");\n");
@@ -423,7 +423,7 @@ function PrepareRow($field)
     }
     else
     {
-        return "'" . mysql_real_escape_string($field, $DB->handle) . "'";
+        return "'" . addslashes($field) . "'";
     }
 }
 
@@ -457,7 +457,7 @@ function DoRestore($filename)
             
             $buffer .= $line;
 
-            mysql_query($buffer, $DB->handle);
+            $DB->Query($buffer);
             
             $buffer = '';
         }

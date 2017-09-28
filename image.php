@@ -16,8 +16,8 @@
 // Initialization
 if( !defined('E_STRICT') ) define('E_STRICT', 2048);
 error_reporting(E_ALL & ~E_NOTICE & ~E_STRICT);
-@set_time_limit(0);
-@set_magic_quotes_runtime(0);
+set_time_limit(0);
+
 if( function_exists('date_default_timezone_set') )
 {
     date_default_timezone_set('America/Chicago');
@@ -35,17 +35,17 @@ if( get_magic_quotes_gpc() == 1 )
 
 // Load configuration settings
 require_once('includes/config.php');
-
+require_once('includes/pdo.class.php');
 if( $_GET['id'] )
 {
     // Connect to database
-    @mysql_connect($C['db_hostname'], $C['db_username'], $C['db_password']) or die(mysql_error());
-    @mysql_select_db($C['db_name']) or die(mysql_error());
+    $pdo = DbPdo::getInstance();
 
-    $result = @mysql_query("SELECT * FROM `tlx_account_ranks` WHERE `username`='".mysql_real_escape_string($_GET['id'])."'") or die(mysql_error());
-    $account = mysql_fetch_assoc($result);
-    mysql_free_result($result);
-    mysql_close();
+    $result = $pdo->prepare('SELECT * FROM `tlx_account_ranks` WHERE `username`=:username');
+    $result->execute(array(':username' => $_GET['id']));
+    $account = $result->fetch(PDO::FETCH_ASSOC);
+    $result->closeCursor();
+    unset($result);
 
     if( $account && $account['rank'] <= $C['ranking_images'] )
     {

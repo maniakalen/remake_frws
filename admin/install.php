@@ -21,7 +21,7 @@ require_once("{$GLOBALS['BASE_DIR']}/includes/mysql.class.php");
 require_once("{$GLOBALS['BASE_DIR']}/includes/template.class.php");
 require_once("{$GLOBALS['BASE_DIR']}/includes/compiler.class.php");
 require_once("{$GLOBALS['BASE_DIR']}/admin/includes/functions.php");
-
+require_once("{$GLOBALS['BASE_DIR']}/includes/pdo.class.php");
 SetupRequest();
 
 $t = new Template();
@@ -253,31 +253,24 @@ function TestDBConnection()
 
     restore_error_handler();
 
-    $handle = @mysql_connect($_REQUEST['db_hostname'], $_REQUEST['db_username'], $_REQUEST['db_password']);
+    $pdo = DbPdo::getInstance();
 
-    if( !$handle )
+    if( $pdo->selectDb($_REQUEST['db_name'], $_REQUEST['db_hostname'], $_REQUEST['db_username'], $_REQUEST['db_password']) )
     {
-        $errors[] = mysql_error();
-    }
-    else
-    {
-        if( !mysql_select_db($_REQUEST['db_name'], $handle) )
-        {
-            $errors[] = mysql_error($handle);
-        }
+        $result = $pdo->query("SELECT VERSION()");
+        $row = $result->fetch(PDO::FETCH_BOTH);
+        $result->closeCursor();
+        unset($result);
 
-        $result = mysql_query("SELECT VERSION()", $handle);
-        $row = mysql_fetch_row($result);
-        mysql_free_result($result);
-       
         $version = explode('.', $row[0]);
 
         if( $version[0] < 4 )
         {
-            $errors[] = "This software requires MySQL version 4.0.0 or newer\nYour server has version {$row[0]} installed.";
+            $errors[] = "This software requires MySQL version 5.0.0 or newer\nYour server has version {$row[0]} installed.";
         }        
-
-        mysql_close($handle);
+        unset($pdo);
+    } else {
+        $errors[] = $pdo->error();
     }
 
     set_error_handler('Error');
