@@ -1167,7 +1167,7 @@ function Error($code, $string, $file, $line)
     }
 
     $file = basename($file);
-
+    $trace = '';
     // Generate stack trace
     $backtrace = debug_backtrace();
     for( $i = 1; $i < count($backtrace); $i++ )

@@ -237,14 +237,14 @@ You can be setup and running with a fully compatible and scalable system in a ma
 
       if( $_POST['user'] && $_POST['host'] )
       {
-          $dbh = @mysql_connect($_POST['host'], $_POST['user'], $_POST['pass']);
+          $dbh = DbPdo::getInstance();
 
           if( $dbh )
           {
-              if( @mysql_select_db($_POST['db']) )
+              if( $dbh->selectDb($_POST['db'], $_POST['user'], $_POST['pass'], $_POST['host']) )
               {
-                  $result = mysql_query('SELECT VERSION()');
-                  $row = mysql_fetch_row($result);
+                  $result = $dbh->query('SELECT VERSION()');
+                  $row = $result->fetch(PDO::FETCH_BOTH);
                   $mysql_version = $row[0];
 
                   preg_match('~^(\d+)\.(\d+)\.(\d+)~', $mysql_version, $matches);
@@ -252,18 +252,19 @@ You can be setup and running with a fully compatible and scalable system in a ma
 
                   if( $a > 4 || ($a == 4 && ($b > 0 || $c > 3)) )
                   {
-                      @mysql_query('CREATE TABLE `tlx_test_script_db` ( `tester` INT )');
-                      if( @mysql_query('LOCK TABLES `tlx_test_script_db` WRITE') )
+                      $dbh->exec('CREATE TABLE `tlx_test_script_db` ( `tester` INT )');
+                      $dbh->exec('LOCK TABLES `tlx_test_script_db` WRITE');
+                      if(substr($dbh->errorCode(), -3) === '000' )
                       {
                           echo "<div class=\"passed\">MySQL version $mysql_version installed - ok</div>";
                       }
                       else
                       {
-                          echo "<div class=\"failed\">MySQL LOCK TABLES privilege not enabled: " . mysql_error() . "</div>";
+                          echo "<div class=\"failed\">MySQL LOCK TABLES privilege not enabled: " . $dbh->error() . "</div>";
                       }
 
-                      @mysql_query('UNLOCK TABLES');
-                      @mysql_query('DROP TABLE `tlx_test_script_db`');
+                      $dbh->exec('UNLOCK TABLES');
+                      $dbh->exec('DROP TABLE `tlx_test_script_db`');
                   }
                   else
                   {
@@ -272,12 +273,12 @@ You can be setup and running with a fully compatible and scalable system in a ma
               }
               else
               {
-                  echo "<div class=\"failed\">Could not select database '" . htmlspecialchars($_POST['db']) . "': " . mysql_error() . "</div>";
+                  echo "<div class=\"failed\">Could not select database '" . htmlspecialchars($_POST['db']) . "': " . $dbh->error() . "</div>";
               }
           }
           else
           {
-              echo "<div class=\"failed\">Could not connect to MySQL database server: " . mysql_error() . "</div>";
+              echo "<div class=\"failed\">Could not connect to MySQL database server: " . $dbh->error() . "</div>";
           }
 
           echo "<br />";
@@ -494,6 +495,9 @@ function GetServerCapabilities()
             // Check for Zend Optimizer and safe_mode
             if( $server['php_cli'] )
             {
+                if (!isset($env)) {
+                    $env = '';
+                }
                 $cli_settings = shell_exec("$env {$server['php_cli']} -r \"echo serialize(array('safe_mode' => ini_get('safe_mode'), 'zend_optimizer' => extension_loaded('Zend Optimizer')));\" 2>/dev/null");
                 $cli_settings = unserialize($cli_settings);
 

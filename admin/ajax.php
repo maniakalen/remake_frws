@@ -796,7 +796,6 @@ function tlxAccountEditProcess()
             foreach( $edits as $name => $value )
             {
                 $name = str_replace('`', '\`', $name);
-                $value = mysql_real_escape_string($value, $DB->handle);
 
                 if( in_array($name, $user_fields) )
                 {
@@ -851,7 +850,7 @@ function tlxCategoryDelete()
         
         foreach($accounts as $account)
         {
-            DeleteAccount($username);
+            DeleteAccount($account['username']);
         }
         
         $DB->Update('DELETE FROM `tlx_categories` WHERE `category_id`=?', array($category_id));
@@ -1076,7 +1075,7 @@ function &GenericSearch($table, $files, $select_callback = null, $item_callback 
     
     if( function_exists($select_callback) )
     {
-        $override = $select_callback($select);
+        $override = call_user_func($select_callback, $select);
     }    
     
     if( !$override )
@@ -1115,7 +1114,7 @@ function &GenericSearch($table, $files, $select_callback = null, $item_callback 
             
             if( function_exists($item_callback) )
             {
-                $item_callback($item);
+                call_user_func($item_callback, $item);
             }
            
             ob_start();

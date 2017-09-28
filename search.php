@@ -20,7 +20,6 @@ require_once('includes/config.php');
 require_once('includes/template.class.php');
 require_once('includes/mysql.class.php');
 
-@set_magic_quotes_runtime(0);
 if( function_exists('date_default_timezone_set') )
 {
     date_default_timezone_set('America/Chicago');

@@ -15,12 +15,13 @@
 
 class DB
 {
-    var $handle;
-    var $hostname;
-    var $username;
-    var $password;
-    var $connected;
-    var $database;
+    /** @var DbPdo */
+    public $handle;
+    public $hostname;
+    public $username;
+    public $password;
+    public $connected;
+    public $database;
 
     function DB($hostname, $username, $password, $database)
     {
@@ -36,8 +37,7 @@ class DB
     {
         if( !$this->connected )
         {
-            $this->handle = mysql_connect($this->hostname, $this->username, $this->password, TRUE);
-            $this->SelectDB($this->database);
+            $this->handle = DbPdo::getInstance();
             $this->connected = TRUE;
         }
     }
@@ -51,7 +51,6 @@ class DB
     {
         if( $this->connected )
         {
-            mysql_close($this->handle);
             $this->handle    = 0;
             $this->connected = FALSE;
         }
@@ -61,24 +60,25 @@ class DB
     {
         $this->database = $database;
 
-        if( !mysql_select_db($this->database, $this->handle) )
+        if( !$this->handle->selectDb($this->database) )
         {
-            trigger_error(mysql_error($this->handle), E_USER_ERROR);
+            trigger_error($this->handle->error(), E_USER_ERROR);
         }
     }
 
     function Row($query, $binds = array())
     {
-        $result = mysql_query($this->Prepare($query, $binds), $this->handle);
+        $query = $this->Prepare($query, $binds);
+        $result = $query->execute($binds);
 
         if( !$result )
         {
-            trigger_error(mysql_error($this->handle) . "<br />$query", E_USER_ERROR);
+            trigger_error($this->handle->error() . "<br />$query", E_USER_ERROR);
         }
 
-        $row = mysql_fetch_assoc($result);
+        $row = $query->fetch(PDO::FETCH_ASSOC);
 
-        mysql_free_result($result);
+        unset($query);
 
         return $row;
     }
@@ -86,16 +86,15 @@ class DB
     function Count($query, $binds = array())
     {
         $query = $this->Prepare($query, $binds);
-        $result = mysql_query($query, $this->handle);
+        $result = $query->execute($query, $binds);
 
-        if( !$result )
-        {
-            trigger_error(mysql_error($this->handle) . "<br />$query", E_USER_ERROR);
+        if( !$result ) {
+            trigger_error($this->handle->error() . "<br />$query", E_USER_ERROR);
         }
 
-        $row = mysql_fetch_row($result);
+        $row = $query->fetch(PDO::FETCH_NUM);
 
-        mysql_free_result($result);
+        unset($query);
 
         return $row[0];
     }
@@ -103,14 +102,14 @@ class DB
     function Query($query, $binds = array())
     {
         $query = $this->Prepare($query, $binds);
-        $result = mysql_query($query, $this->handle);
+        $result = $query->execute($binds);
 
         if( !$result )
         {
-            trigger_error(mysql_error($this->handle) . "<br />$query", E_USER_ERROR);
+            trigger_error($this->handle->error() . "<br />$query", E_USER_ERROR);
         }
 
-        return $result;
+        return $query;
     }
 
     function QueryWithPagination($query, $binds = array(), $page = 1, $per_page = 10, $nolimit = FALSE)
@@ -163,71 +162,63 @@ class DB
 
     function &FetchAll($query, $binds = array(), $key = null)
     {
-        $all = array();
-        $query = $this->Prepare($query, $binds);
-        $result = mysql_query($query, $this->handle);
-
-        if( !$result )
-        {
-            trigger_error(mysql_error($this->handle) . "<br />$query", E_USER_ERROR);
-        }
-
-        while( $row = mysql_fetch_assoc($result) )
-        {
-            if( $key )
-            {
+        $result = $this->Query($query, $binds);
+        $rows = $result->fetchAll(PDO::FETCH_ASSOC);
+        if ($key) {
+            $all = array();
+            foreach ($rows as $row) {
                 $all[$row[$key]] = $row;
             }
-            else
-            {
-                $all[] = $row;
-            }
+            return $all;
         }
 
-        return $all;
+        return $rows;
     }
 
     function Update($query, $binds = array())
     {
+        /** @var PDOStatement $query */
         $query = $this->Prepare($query, $binds);
-        $result = mysql_query($query, $this->handle);
-
-        if( !$result )
-        {
-            trigger_error(mysql_error($this->handle) . "<br />$query", E_USER_ERROR);
+        if ($query->execute($binds)) {
+            return $query->rowCount();
         }
-        
-        return mysql_affected_rows($this->handle);
+
+        trigger_error("Failet to fetch rows count", E_USER_ERROR);
     }
 
     function NextRow($result)
     {
-        return mysql_fetch_assoc($result);
+        if (!($result instanceof PDOStatement)) {
+            trigger_error("Trying to fetch data from incorrect source", E_USER_ERROR);
+        }
+        return $result->fetch(PDO::FETCH_ASSOC);
     }
 
     function Free($result)
     {
-        mysql_free_result($result);
+        if ($result instanceof PDOStatement) {
+            $result->closeCursor();
+        }
     }
 
     function InsertID()
     {
-        return mysql_insert_id($this->handle);
+        return $this->handle->lastInsertId();
     }
 
     function NumRows($result)
     {
-        return mysql_num_rows($result);
+        return ($result instanceof PDOStatement)?$result->rowCount():0;
     }
 
     function FetchArray($result)
     {
-        return mysql_fetch_array($result);
+        return ($result instanceof PDOStatement)?$result->fetch(PDO::FETCH_BOTH):null;
     }
 
     function Seek($result, $where)
     {
-        mysql_data_seek($result, $where);
+
     }
 
     function BindList($count)
@@ -248,16 +239,19 @@ class DB
         $index = 0;
         
         $pieces = preg_split('/(\?|#)/', $query, -1, PREG_SPLIT_DELIM_CAPTURE);
+
+        $params = array();
         foreach( $pieces as $piece )
         {
             if( $piece == '?' )
             {
-                if( $binds[$index] === NULL )
+                if( $binds[$index] === NULL ) {
                     $query_result .= 'NULL';
-                else if( is_numeric($binds[$index]) )
-                    $query_result .= $binds[$index];
-                else
-                    $query_result .= "'" . mysql_real_escape_string($binds[$index], $this->handle) . "'";
+                } else {
+                    $param = ':param' . $index;
+                    $params[$param] = $binds[$index];
+                    $query_result .= $param;
+                }
 
                 $index++;
             }
@@ -272,20 +266,24 @@ class DB
                 $query_result .= $piece;
             }
         }
-
-        return $query_result;
+        if (!empty($params)) {
+            $binds = $params;
+        }
+        return $this->handle->prepare($query_result);
     }
 
     function Escape($string)
     {
-        return mysql_real_escape_string($string, $this->handle);
+        return addslashes($string);
     }
 
     function GetTables()
     {
         $tables = array();
         $result = $this->Query('SHOW TABLES');
-        $field = mysql_field_name($result, 0);
+        $field = $result->getColumnMeta(0);
+        if (!$field['name']) return null;
+        $field = $field['name'];
 
         while( $row = $this->NextRow($result) )
         {
@@ -301,8 +299,10 @@ class DB
     {
         $columns = array();
         $result = $this->Query('DESCRIBE #', array($table));
-        $field = mysql_field_name($result, 0);
-        
+        $field = $result->getColumnMeta(0);
+        if (!$field['name']) return null;
+        $field = $field['name'];
+
         while( $column = $this->NextRow($result) )
         {
             if( $as_hash )

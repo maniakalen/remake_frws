@@ -55,15 +55,20 @@ if( $_SERVER['REQUEST_METHOD'] == 'GET' )
     $datetime = "$today-$this_hour";
 
     // Connect to database
-    @mysql_connect($C['db_hostname'], $C['db_username'], $C['db_password']) or die(mysql_error());
-    @mysql_select_db($C['db_name']) or die(mysql_error());
+    $pdo = DbPdo::getInstance();
+    if (!$pdo->selectDb($C['db_name'], $C['db_hostname'], $C['db_username'], $C['db_password'])) {
+        die($pdo->error());
+    }
+
 
     if( !$C['using_cron'] )
     {
         // Check if it is time for a page rebuild
-        $result = @mysql_query("SELECT `value` FROM `tlx_stored_values` WHERE `name`='last_rebuild'") or die(mysql_error());
-        list($last_rebuild) = mysql_fetch_row($result);
-        mysql_free_result($result);
+        $result = $pdo->query("SELECT `value` FROM `tlx_stored_values` WHERE `name`='last_rebuild'");
+        if ($pdo->hasError()) { die($pdo->error()); }
+        list($last_rebuild) = $result->fetchColumn(0);
+        $result->closeCursor();
+        unset($result);
 
         if( $last_rebuild <= $now - $C['rebuild_interval'] )
         {
@@ -71,10 +76,12 @@ if( $_SERVER['REQUEST_METHOD'] == 'GET' )
         }
 
         // Check if it is time for a daily or hourly update
-        $result = @mysql_query("SELECT `value` FROM `tlx_stored_values` WHERE `name`='last_updates'") or die(mysql_error());
-        list($last_updates) = mysql_fetch_row($result);
+        $result = $pdo->query("SELECT `value` FROM `tlx_stored_values` WHERE `name`='last_updates'");
+        if ($pdo->hasError()) { die($pdo->error()); }
+        list($last_updates) = $result->fetchColumn(0);
         $last_updates = unserialize($last_updates);
-        mysql_free_result($result);
+        $result->closeCursor();
+        unset($result);
 
         if( $last_updates['daily'] != $today )
         {
@@ -104,10 +111,11 @@ if( $_SERVER['REQUEST_METHOD'] == 'GET' )
         else
         {
             // Check ratio of trades to links
-            $result = @mysql_query('SELECT (`sent_trades`/`sent_total`)*100 AS `trade_percent` FROM `tlx_skim_ratio`') or die(mysql_error());
+            $result = $pdo->query('SELECT (`sent_trades`/`sent_total`)*100 AS `trade_percent` FROM `tlx_skim_ratio`');
+            if ($pdo->hasError()) { die($pdo->error()); }
             if( $result )
             {
-                list($trade_percent) = @mysql_fetch_row($result) or die(mysql_error());
+                list($trade_percent) = $result->fetchColumn(0);
             }
 
             // Determine - based on ratio - if we should send to a trade
@@ -129,11 +137,11 @@ if( $_SERVER['REQUEST_METHOD'] == 'GET' )
                         break;
                 }
 
-                $result = @mysql_query("SELECT *,$owed AS `owed` FROM `tlx_accounts` JOIN `tlx_account_hourly_stats` USING (`username`) WHERE $where ORDER BY `owed` DESC");
+                $result = $pdo->query("SELECT *,$owed AS `owed` FROM `tlx_accounts` JOIN `tlx_account_hourly_stats` USING (`username`) WHERE $where ORDER BY `owed` DESC");
 
                 if( $result )
                 {
-                    while( $row = @mysql_fetch_array($result, MYSQL_ASSOC) )
+                    while( $row = $result->fetch(PDO::FETCH_ASSOC) )
                     {
                         if( $sites_sent_to[$row['username']] )
                         {
@@ -143,11 +151,12 @@ if( $_SERVER['REQUEST_METHOD'] == 'GET' )
                         $account = $row;
                         break;
                     }
-                    mysql_free_result($result);
+                    $result->closeCursor();
+                    unset($result);
                 }
             }
-
-			@mysql_query(mysql_prepare('UPDATE `tlx_skim_ratio` SET `sent_total`=`sent_total`+1,`sent_trades`=`sent_trades`+?', array($send_to_trade ? 1 : 0))) or die(mysql_error());
+            $statement = $pdo->prepare('UPDATE `tlx_skim_ratio` SET `sent_total`=`sent_total`+1,`sent_trades`=`sent_trades`+' . ($send_to_trade ? '1' : '0'));
+			$statement->execute();
         }
     }
 
@@ -156,8 +165,9 @@ if( $_SERVER['REQUEST_METHOD'] == 'GET' )
     else if( $_GET['rand'] )
     {
         // Get a random account
-        $result = @mysql_query(mysql_prepare('SELECT * FROM `tlx_accounts` WHERE `status`="active" AND `disabled`=0 ORDER BY RAND() LIMIT 1')) or die(mysql_error());
-        $account = @mysql_fetch_assoc($result);
+        $result = $pdo->query('SELECT * FROM `tlx_accounts` WHERE `status`="active" AND `disabled`=0 ORDER BY RAND() LIMIT 1');
+        if ($pdo->hasError()) { die($pdo->error()); }
+        $account = $result->fetch(PDO::FETCH_ASSOC);
     }
 
 
@@ -165,9 +175,13 @@ if( $_SERVER['REQUEST_METHOD'] == 'GET' )
     // TOPLIST MODE
     else
     {
-        // Get the account
-        $result = @mysql_query(mysql_prepare('SELECT * FROM `tlx_accounts` WHERE `username`=?', array($_GET['id']))) or die(mysql_error());
-        $account = @mysql_fetch_assoc($result);
+        $statement = $pdo->prepare('SELECT * FROM `tlx_accounts` WHERE `username`=:userid');
+        $statement->execute(array(':userid' => $_GET['id']));
+        if (substr($statement->errorCode(), -3) !== '000') {
+            die(reset($statement->errorInfo()));
+        }
+        $account = $statement->fetch(PDO::FETCH_ASSOC);
+        $statement->closeCursor();
     }
 
     $long_ip = sprintf('%u', ip2long($_SERVER['REMOTE_ADDR']));
@@ -184,53 +198,58 @@ if( $_SERVER['REQUEST_METHOD'] == 'GET' )
         }
 
         // GeoIP lookup
-        $result = @mysql_query(mysql_prepare('SELECT * FROM `tlx_ip2country` WHERE `ip_end` >= ?', array($long_ip))) or die(mysql_error());
-        if( $result )
-        {
-            $geoip = @mysql_fetch_assoc($result) or die(mysql_error());
-        }
+        $statement = $pdo->prepare('SELECT * FROM `tlx_ip2country` WHERE `ip_end` >= :ip');
+        $result = $statement->execute(array(':ip' => $long_ip));
 
+        if( $result ) {
+            $geoip = $statement->fetch(PDO::FETCH_ASSOC);
+        } else {
+            die(reset($statement->errorInfo()));
+        }
+        $statement->closeCursor();
         // Update the IP log
-        @mysql_query(mysql_prepare('UPDATE `tlx_ip_log_out` SET `raw_out`=`raw_out`+1,`last_visit`=NOW() WHERE `username`=? AND `ip_address`=?', array($account['username'], $long_ip))) or die(mysql_error());
-        if( @mysql_affected_rows() == 0 )
+        $statement = $pdo->prepare('UPDATE `tlx_ip_log_out` SET `raw_out`=`raw_out`+1,`last_visit`=NOW() WHERE `username`=:user AND `ip_address`=:ip');
+        $statement->execute(array(':user' => $account['username'], ':ip' => $long_ip));
+        if( $statement->rowCount() == 0 )
         {
-            @mysql_query(mysql_prepare('INSERT INTO `tlx_ip_log_out` VALUES (?,?,?,NOW())', array($account['username'], $long_ip, 1))) or die(mysql_error());
+            $statement = $pdo->prepare('INSERT INTO `tlx_ip_log_out` VALUES (:user,:ip,:num,NOW())');
+            $statement->execute(array(':user' => $account['username'], ':ip' => $long_ip, ':num' => 1));
+            $statement->closeCursor();
         }
         else
         {
             $raw_out = TRUE;
         }
-
+        $pdo->setErrorCallback(function($ex) { die($ex->getMessage()); });
         // Update raw and unique click counts
         if( $raw_out )
         {
-            @mysql_query(mysql_prepare('UPDATE `tlx_account_hourly_stats` SET #=#+1,`raw_out_total`=`raw_out_total`+1 WHERE `username`=?',
-                                       array("raw_out_$this_hour", "raw_out_$this_hour", $account['username']))) or die(mysql_error());
+            $pdo->prepareAndExecute(sprintf('UPDATE `tlx_account_hourly_stats` SET `%s`=%s+1,`raw_out_total`=`raw_out_total`+1 WHERE `username`=:user', "raw_out_$this_hour", "raw_out_$this_hour"), array(':user' => $account['username']));
 
-            @mysql_query(mysql_prepare('UPDATE `tlx_account_country_stats` SET `raw_out`=`raw_out`+1 WHERE `username`=? AND `country`=?',
-                                       array($account['username'], $geoip['country']))) or die(mysql_error());
+            $stmt = $pdo->prepare('UPDATE `tlx_account_country_stats` SET `raw_out`=`raw_out`+1 WHERE `username`=:user AND `country`=:country');
+            $stmt->execute(array(':user' => $account['username'], ':country' => $geoip['country']));
 
-            if( @mysql_affected_rows() == 0 )
+            if( $stmt->rowCount() == 0 )
             {
-                @mysql_query(mysql_prepare('INSERT INTO `tlx_account_country_stats` VALUES (?,?,?,?,?,?,?)', array($account['username'], $geoip['country'], 0, 0, 1, 1, 0))) or die(mysql_error());
+                $pdo->prepareAndExecute('INSERT INTO `tlx_account_country_stats` VALUES (?,?,?,?,?,?,?)', array(':user' => $account['username'], ':country' => $geoip['country'], ':num1' => 0, ':num2' => 0, ':num3' => 1, ':num4' => 1, ':num5' => 0));
             }
-
-            @mysql_query(mysql_prepare('UPDATE `tlx_country_stats` SET `raw_out`=`raw_out`+1 WHERE `country`=?', array($geoip['country']))) or die(mysql_error());
+            $stmt->closeCursor();
+            unset($stmt);
+            $pdo->prepareAndExecute('UPDATE `tlx_country_stats` SET `raw_out`=`raw_out`+1 WHERE `country`=:country', array(':country' => $geoip['country']));
         }
         else
         {
-            @mysql_query(mysql_prepare('UPDATE `tlx_account_hourly_stats` SET #=#+1,#=#+1,`raw_out_total`=`raw_out_total`+1,`unique_out_total`=`unique_out_total`+1 WHERE `username`=?',
-                                       array("raw_out_$this_hour", "raw_out_$this_hour", "unique_out_$this_hour", "unique_out_$this_hour", $account['username']))) or die(mysql_error());
+            $pdo->prepareAndExecute(sprintf('UPDATE `tlx_account_hourly_stats` SET `%s`=`%s`+1,`%s`=%s+1,`raw_out_total`=`raw_out_total`+1,`unique_out_total`=`unique_out_total`+1 WHERE `username`=?', "raw_out_$this_hour", "raw_out_$this_hour","unique_out_$this_hour", "unique_out_$this_hour"), array(':user' => $account['username']));
+            $stmt = $pdo->prepare('UPDATE `tlx_account_country_stats` SET `raw_out`=`raw_out`+1,`unique_out`=`unique_out`+1 WHERE `username`=:user AND `country`=:country');
+            $stmt->execute(array(':user' => $account['username'], ':country' => $geoip['country']));
 
-            @mysql_query(mysql_prepare('UPDATE `tlx_account_country_stats` SET `raw_out`=`raw_out`+1,`unique_out`=`unique_out`+1 WHERE `username`=? AND `country`=?',
-                                       array($account['username'], $geoip['country']))) or die(mysql_error());
-
-            if( @mysql_affected_rows() == 0 )
+            if( $stmt->rowCount() == 0 )
             {
-                @mysql_query(mysql_prepare('INSERT INTO `tlx_account_country_stats` VALUES (?,?,?,?,?,?,?)', array($account['username'], $geoip['country'], 0, 0, 1, 1, 0))) or die(mysql_error());
+                $pdo->prepareAndExecute('INSERT INTO `tlx_account_country_stats` VALUES (?,?,?,?,?,?,?)', array(':user' => $account['username'], ':country' => $geoip['country'], ':num1' => 0, ':num2' => 0, ':num3' => 1, ':num4' => 1, ':num5' => 0));
             }
-
-            @mysql_query(mysql_prepare('UPDATE `tlx_country_stats` SET `raw_out`=`raw_out`+1,`unique_out`=`unique_out`+1 WHERE `country`=?', array($geoip['country']))) or die(mysql_error());
+            $stmt->closeCursor();
+            unset($stmt);
+            $pdo->prepareAndExecute('UPDATE `tlx_country_stats` SET `raw_out`=`raw_out`+1,`unique_out`=`unique_out`+1 WHERE `country`=?', array(':c' => $geoip['country']));
         }
 
         // Update cookie to mark that surfer has been sent to this site
@@ -242,20 +261,18 @@ if( $_SERVER['REQUEST_METHOD'] == 'GET' )
     if( $referrer_account && $referrer_account != $account['username'] )
     {
         // Update the IP click log
-        @mysql_query(mysql_prepare('UPDATE `tlx_ip_log_clicks` SET `clicks`=`clicks`+1,`last_visit`=NOW() WHERE `username`=? AND `ip_address`=? AND `url_hash`=?',
-                                   array($referrer_account,
-                                         $long_ip,
-                                         sha1($send_to)))) or die(mysql_error());
-
-        if( @mysql_affected_rows() == 0 )
+        $stmt = $pdo->prepare('UPDATE `tlx_ip_log_clicks` SET `clicks`=`clicks`+1,`last_visit`=NOW() WHERE `username`=:u AND `ip_address`=:i AND `url_hash`=:h');
+        $stmt->execute(array(':u' => $referrer_account, ':i' => $long_ip, ':h' => sha1($send_to)));
+        if( $stmt->rowCount() == 0 )
         {
-            @mysql_query(mysql_prepare('INSERT INTO `tlx_ip_log_clicks` VALUES (?,?,?,?,NOW())', array($referrer_account, $long_ip, sha1($send_to), 1))) or die(mysql_error());
-            @mysql_query(mysql_prepare('UPDATE `tlx_account_hourly_stats` SET #=#+1,`clicks_total`=`clicks_total`+1 WHERE `username`=?',
-                                       array("clicks_$this_hour", "clicks_$this_hour", $referrer_account))) or die(mysql_error());
+            $stmt->closeCursor();
+            $pdo->prepareAndExecute('INSERT INTO `tlx_ip_log_clicks` VALUES (?,?,?,?,NOW())', array(':r' => $referrer_account, ':i' => $long_ip, ':h' => sha1($send_to), ':n' => 1));
+            $pdo->prepareAndExecute(sprintf('UPDATE `tlx_account_hourly_stats` SET %s=%s+1,`clicks_total`=`clicks_total`+1 WHERE `username`=?', "clicks_$this_hour", "clicks_$this_hour"), array(':r' => $referrer_account));
+        } else {
+            $stmt->closeCursor();
         }
+        unset($stmt);
     }
-
-    @mysql_close();
 }
 
 
@@ -281,7 +298,7 @@ function mysql_prepare($query, $binds)
             else if( is_numeric($binds[$index]) )
                 $query_result .= $binds[$index];
             else
-                $query_result .= "'" . mysql_real_escape_string($binds[$index]) . "'";
+                $query_result .= "'" . DbPdo::getInstance()->quote($binds[$index]) . "'";
 
             $index++;
         }
